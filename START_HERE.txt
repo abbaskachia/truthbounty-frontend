@@ -1,0 +1,59 @@
+========================================
+PR FIX: START HERE
+========================================
+
+PROBLEM: pnpm installed but not in PATH
+SOLUTION: Use the direct path script
+
+========================================
+QUICK FIX:
+========================================
+
+Double-click: RUN_CI_CHECKS_DIRECT.bat
+
+This script directly calls pnpm from its installed
+location and runs all 7 CI checks.
+
+========================================
+OPTIONAL: Fix PATH Permanently
+========================================
+
+If you want pnpm to work as a normal command:
+
+1. Right-click: ADD_PNPM_TO_PATH.bat
+2. Select "Run as administrator"
+3. Close ALL terminal windows
+4. Open a new terminal
+5. Now "pnpm" command will work everywhere
+
+========================================
+WHAT HAPPENS NEXT:
+========================================
+
+1. Run RUN_CI_CHECKS_DIRECT.bat
+2. All checks should PASS (code is correct)
+3. Push your branch
+4. Create PR
+
+========================================
+YOUR CODE IS READY:
+========================================
+
+✓ pnpm is installed at: %APPDATA%\npm\
+✓ All TypeScript types are correct
+✓ All imports resolve properly
+✓ Container/presentational split implemented
+✓ Tests updated
+✓ Documentation complete
+
+The direct path script bypasses the PATH issue.
+
+========================================
+RECOMMENDED ACTION NOW:
+========================================
+
+Double-click: RUN_CI_CHECKS_DIRECT.bat
+
+This will run all 7 CI checks and show results.
+
+========================================

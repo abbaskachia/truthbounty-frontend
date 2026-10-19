@@ -122,6 +122,7 @@ export interface DisputeSubmissionPayload {
   claimId: string;
   reason: string;
   bondAmount: string; // Wei amount as string
+  bondToken?: string; // ERC-20 token address (undefined/null for native ETH)
   userAddress: string;
   
   // Optional metadata
@@ -138,7 +139,7 @@ export interface DisputeTransaction {
   status: DisputeSubmissionStatus;
   
   claimId: string;
-  disputeId?: string; // Available after indexing
+  disputeId?: string; // Only available after receipt + log parsing
   reason: string;
   bondAmount: string; // Wei amount as string
   
@@ -148,6 +149,11 @@ export interface DisputeTransaction {
   // Gas details
   gasUsed?: string;
   gasPrice?: string;
+  
+  // Receipt confirmation
+  confirmationStatus: 'pending' | 'confirmed' | 'failed' | 'replaced' | 'reorged';
+  blockConfirmed?: number;
+  receiptTimestamp?: string; // ISO 8601, when receipt was confirmed
   
   // Bond lock confirmation
   bondLocked: boolean;
@@ -287,4 +293,110 @@ export interface TopVerifier {
   name: string;
   staked: string;
   score: number;
+}
+
+
+/**
+ * Safely parse a wei amount string to bigint with validation
+ * @throws Error if the string is not a valid non-negative integer
+ */
+export function parseWeiAmount(value: unknown): bigint {
+  if (typeof value !== 'string') {
+    throw new Error('Amount must be a string');
+  }
+  
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error('Amount must be a non-negative integer (no decimals or scientific notation)');
+  }
+  
+  try {
+    const bigintValue = BigInt(trimmed);
+    if (bigintValue < 0n) {
+      throw new Error('Amount cannot be negative');
+    }
+    return bigintValue;
+  } catch (err) {
+    if (err instanceof SyntaxError || (err instanceof Error && err.message.includes('Cannot convert'))) {
+      throw new Error('Amount is not a valid number');
+    }
+    throw err;
+  }
+}
+
+/**
+ * Validate ChallengeBond data for render safety
+ * @throws Error if validation fails
+ */
+export function validateChallengeBond(bond: unknown): asserts bond is ChallengeBond {
+  if (!bond || typeof bond !== 'object') {
+    throw new Error('Bond must be an object');
+  }
+  
+  const b = bond as Record<string, unknown>;
+  
+  if (typeof b.claimId !== 'string' || !b.claimId.trim()) {
+    throw new Error('Bond must have a valid claimId');
+  }
+  
+  if (typeof b.bondAmount !== 'string' || !b.bondAmount.trim()) {
+    throw new Error('Bond must have a bondAmount');
+  }
+  
+  // Try to parse to validate it's a valid wei amount
+  parseWeiAmount(b.bondAmount);
+  
+  if (typeof b.slashAmount !== 'string' || !b.slashAmount.trim()) {
+    throw new Error('Bond must have a slashAmount');
+  }
+  
+  parseWeiAmount(b.slashAmount);
+  
+  if (typeof b.slashPercentage !== 'number' || b.slashPercentage < 0 || b.slashPercentage > 100) {
+    throw new Error('Slash percentage must be between 0 and 100');
+  }
+  
+  if (typeof b.potentialReward !== 'string' || !b.potentialReward.trim()) {
+    throw new Error('Bond must have a potentialReward');
+  }
+  
+  parseWeiAmount(b.potentialReward);
+  
+  if (typeof b.rewardMultiplier !== 'number' || b.rewardMultiplier <= 0) {
+    throw new Error('Reward multiplier must be positive');
+  }
+}
+
+/**
+ * Validate DisputeContext for render safety
+ * @throws Error if validation fails
+ */
+export function validateDisputeContext(context: unknown): asserts context is DisputeContext {
+  if (!context || typeof context !== 'object') {
+    throw new Error('Context must be an object');
+  }
+  
+  const c = context as Record<string, unknown>;
+  
+  // Validate bond
+  if (!c.bond) {
+    throw new Error('Context must include bond information');
+  }
+  validateChallengeBond(c.bond);
+  
+  // Validate wallet position
+  if (!c.walletPosition || typeof c.walletPosition !== 'object') {
+    throw new Error('Context must include wallet position');
+  }
+  
+  const wp = c.walletPosition as Record<string, unknown>;
+  if (typeof wp.userAddress !== 'string' || !wp.userAddress.match(/^0x[a-fA-F0-9]{40}$/)) {
+    throw new Error('Invalid user address in wallet position');
+  }
+  
+  if (typeof wp.currentBalance !== 'string' || !wp.currentBalance.trim()) {
+    throw new Error('Context must include current balance');
+  }
+  
+  parseWeiAmount(wp.currentBalance);
 }

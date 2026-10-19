@@ -60,54 +60,64 @@ export function useDisputeContext(
 
   /**
    * Fetch provisional outcome from contract/indexer
+   * 
+   * BLOCKED: Requires V2-FE-XXX (provisional outcome indexer or contract readouts)
+   * which is not yet implemented. This will remain not-implemented until that
+   * dependency is delivered.
    */
   const fetchProvisionalOutcome = useCallback(
     async (claimIdParam: string): Promise<ProvisionalOutcome> => {
-      // In production, this would:
-      // 1. Call contract.getClaimOutcome(claimId)
-      // 2. Query indexer GET /api/claims/:claimId/outcome for rich metadata
-      // 3. Validate outcome is provisional (dispute window still open)
-
-      throw new Error('Not implemented');
+      throw new Error(
+        'Provisional outcome read is not yet implemented. ' +
+        'Blocked on backend indexer for canonical provisional outcome state. ' +
+        'Issue: https://github.com/DigiNodes/truthbounty-frontend/issues/321'
+      );
     },
     []
   );
 
   /**
    * Fetch dispute deadline from contract/indexer
+   * 
+   * BLOCKED: Requires V2-FE-XXX (dispute deadline calculation) which is not yet
+   * implemented. This will remain not-implemented until that dependency is delivered.
    */
   const fetchDisputeDeadline = useCallback(
     async (
       claimIdParam: string,
       currentBlockNum: number
     ): Promise<DisputeDeadline> => {
-      // In production, this would:
-      // 1. Call contract.getDisputeDeadline(claimId)
-      // 2. Calculate time remaining from block.timestamp
-      // 3. Check if dispute already opened via contract.disputes(claimId)
-
-      throw new Error('Not implemented');
+      throw new Error(
+        'Dispute deadline read is not yet implemented. ' +
+        'Blocked on backend indexer for canonical dispute deadline state. ' +
+        'Issue: https://github.com/DigiNodes/truthbounty-frontend/issues/321'
+      );
     },
     []
   );
 
   /**
    * Fetch challenge bond requirements from contract
+   * 
+   * BLOCKED: Requires V2-FE-XXX (challenge bond configuration) which is not yet
+   * implemented. This will remain not-implemented until that dependency is delivered.
    */
   const fetchChallengeBond = useCallback(
     async (claimIdParam: string): Promise<ChallengeBond> => {
-      // In production, this would:
-      // 1. Call contract.getChallengeBond(claimId)
-      // 2. Calculate slash amount (typically 10-20% of bond)
-      // 3. Calculate potential reward (typically 1.5-2x bond if successful)
-
-      throw new Error('Not implemented');
+      throw new Error(
+        'Challenge bond read is not yet implemented. ' +
+        'Blocked on backend indexer for canonical challenge bond configuration. ' +
+        'Issue: https://github.com/DigiNodes/truthbounty-frontend/issues/321'
+      );
     },
     []
   );
 
   /**
    * Fetch wallet position and eligibility
+   * 
+   * BLOCKED: Requires V2-FE-XXX (wallet balance and participation state) which is
+   * not yet implemented. This will remain not-implemented until that dependency is delivered.
    */
   const fetchWalletPosition = useCallback(
     async (
@@ -115,13 +125,11 @@ export function useDisputeContext(
       bondAmount: string,
       walletAddress: string
     ): Promise<DisputeWalletPosition> => {
-      // In production, this would:
-      // 1. Call contract.balanceOf(userAddress)
-      // 2. Call contract.hasParticipated(claimId, userAddress)
-      // 3. Call contract.disputes(claimId).challenger to check if already opened
-      // 4. Validate sufficient balance for bond
-
-      throw new Error('Not implemented');
+      throw new Error(
+        'Wallet position read is not yet implemented. ' +
+        'Blocked on backend indexer for canonical wallet state (balance, participation). ' +
+        'Issue: https://github.com/DigiNodes/truthbounty-frontend/issues/321'
+      );
     },
     []
   );
@@ -260,7 +268,20 @@ export function useDisputeContext(
     } catch (err) {
       const errorMsg =
         err instanceof Error ? err.message : 'Failed to fetch dispute context';
-      setError(errorMsg);
+      
+      // Check if this is a blocking dependency error
+      const isBlockingDependency = errorMsg.includes('not yet implemented') && errorMsg.includes('Blocked on');
+      
+      if (isBlockingDependency) {
+        setError(
+          'Dispute opening is temporarily unavailable. ' +
+          'The canonical state backend has not been integrated. ' +
+          'Please check back later.'
+        );
+      } else {
+        setError(errorMsg);
+      }
+      
       setContext(null);
     } finally {
       setIsLoading(false);

@@ -39,6 +39,7 @@ function isDisputeDraftPayload(value: unknown): value is DisputeDraftPayload {
 export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: OpenDisputeProps) => {
   const [reason, setReason] = useState('');
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [bondDataError, setBondDataError] = useState<string | null>(null);
 
   // onSuccess is only invoked after a real on-chain write returns a dispute id.
   // Projected/simulated IDs are never treated as success (V2-FE-100).
@@ -65,7 +66,20 @@ export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: Op
   // This pattern supports future ERC-20 bond tokens
   const bondTokenAddress = context?.bond?.bondToken as `0x${string}` | undefined;
   const requiresBondApproval = Boolean(bondTokenAddress);
-  const bondAmountBigInt = context?.bond?.bondAmount ? BigInt(context.bond.bondAmount) : undefined;
+  
+  // Defensively parse bond amount with validation
+  let bondAmountBigInt: bigint | undefined;
+  try {
+    if (context?.bond?.bondAmount) {
+      const { parseWeiAmount } = require('@/app/types/dispute');
+      bondAmountBigInt = parseWeiAmount(context.bond.bondAmount);
+    }
+    setBondDataError(null);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Invalid bond amount';
+    setBondDataError(`Bond data error: ${errorMsg}`);
+    bondAmountBigInt = undefined;
+  }
 
   const bondApproval = useERC20Approval({
     tokenAddress: requiresBondApproval ? bondTokenAddress : undefined,
@@ -166,6 +180,7 @@ export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: Op
         claimId,
         reason,
         bondAmount: context.bond.bondAmount,
+        bondToken: context.bond.bondToken,
         userAddress: context.walletPosition.userAddress,
       };
 
@@ -188,12 +203,17 @@ export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: Op
       // Never invent a dispute ID or success state without a real on-chain write.
       // submitDispute fails closed until wallet writeContract is integrated.
       const tx = await submitDispute(context, payload);
-      if (tx?.transactionHash) {
-        handleRealSuccess?.(tx.disputeId ?? tx.transactionHash);
+      if (tx?.transactionHash && tx.status === 'CONFIRMED') {
+        // Only report success after confirmed receipt with real dispute ID
+        handleRealSuccess?.(tx.disputeId || tx.transactionHash);
         // Verified on-chain write — release the local draft and its guard.
         draft.markPersisted();
         onClose();
         setReason('');
+      } else if (tx?.transactionHash) {
+        // Transaction is pending but not yet confirmed
+        setSubmissionError('Transaction submitted but not yet confirmed. Please wait...');
+        return;
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to submit dispute';
@@ -245,7 +265,8 @@ export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: Op
     bondApprovalReady &&
     Boolean(context?.isEligible) &&
     Boolean(reason.trim()) &&
-    !isLoading;
+    !isLoading &&
+    !bondDataError; // Fail closed if bond data is invalid
 
   if (!isOpen) return null;
 
@@ -286,6 +307,21 @@ export const OpenDispute = ({ claimId, isOpen, onClose, onSuccess, onError }: Op
               role="alert"
             >
               {displayError}
+            </div>
+          )}
+
+          {/* Bond data validation error - fail closed */}
+          {bondDataError && (
+            <div
+              className="rounded-lg bg-red-950/30 border border-red-900/50 p-3 text-sm text-red-300"
+              role="alert"
+              aria-label="Bond data error"
+            >
+              <p className="font-medium mb-1">Bond data error</p>
+              <p>{bondDataError}</p>
+              <p className="mt-2 text-xs opacity-90">
+                Please close this modal and try again. Contact support if this error persists.
+              </p>
             </div>
           )}
 

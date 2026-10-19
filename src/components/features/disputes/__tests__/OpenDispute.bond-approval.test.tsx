@@ -1,6 +1,7 @@
 /**
  * OpenDispute — Bond approval integration tests
- * Covers V2-FE-049: Bond approval gate for ERC-20 bond tokens
+ * Covers V2-FE-058: Bond approval gate for ERC-20 bond tokens
+ * GitHub Issue: https://github.com/DigiNodes/truthbounty-frontend/issues/321
  */
 
 import React from 'react';
@@ -460,3 +461,401 @@ describe('OpenDispute — Bond approval integration', () => {
     });
   });
 });
+
+  describe('Transaction value semantics: ERC-20 vs native ETH', () => {
+    it('submits with value: 0n for ERC-20 bond tokens', async () => {
+      const user = userEvent.setup();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+      
+      // Mock to capture writeContractAsync args
+      const writeContractSpy = jest.fn().mockResolvedValue('0xhash');
+      jest.spyOn(require('wagmi'), 'useWriteContract').mockReturnValue({
+        writeContractAsync: writeContractSpy,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        // Verify writeContractAsync was called with value: 0n for ERC-20
+        const callArgs = writeContractSpy.mock.calls[0][0];
+        expect(callArgs.value).toBe(0n);
+      });
+    });
+
+    it('submits with value: bondAmount for native ETH bonds', async () => {
+      const user = userEvent.setup();
+      // Mock context with no bondToken (native ETH)
+      (mockContext.bond as any) = {
+        bondAmount: '1000000000000000000',
+        bondToken: undefined,
+        slashAmount: '100000000000000000',
+        slashPercentage: 10,
+        potentialReward: '1500000000000000000',
+        rewardMultiplier: 1.5,
+      };
+
+      const writeContractSpy = jest.fn().mockResolvedValue('0xhash');
+      jest.spyOn(require('wagmi'), 'useWriteContract').mockReturnValue({
+        writeContractAsync: writeContractSpy,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      // Should not show approval button for native ETH
+      expect(screen.queryByText(/step 1: approve bond token/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /approve bond/i })).not.toBeInTheDocument();
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        // Verify writeContractAsync was called with value: bondAmount for native ETH
+        const callArgs = writeContractSpy.mock.calls[0][0];
+        expect(callArgs.value).toBe(BigInt('1000000000000000000'));
+      });
+    });
+
+    it('never submits with both ERC-20 transfer AND native value', async () => {
+      // This is a regression test to ensure we never accidentally send both
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      const writeContractSpy = jest.fn().mockResolvedValue('0xhash');
+      jest.spyOn(require('wagmi'), 'useWriteContract').mockReturnValue({
+        writeContractAsync: writeContractSpy,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        const callArgs = writeContractSpy.mock.calls[0][0];
+        // For ERC-20: MUST be 0, never the bond amount
+        expect(callArgs.value).toBe(0n);
+        // Verify it's not accidentally both
+        expect(callArgs.value === BigInt('1000000000000000000')).toBe(false);
+      });
+    });
+  });
+
+  describe('Receipt confirmation and dispute ID extraction', () => {
+    it('waits for receipt before calling onSuccess', async () => {
+      const onSuccess = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      // Mock submission that completes after delay (simulating receipt wait)
+      mockSubmitDispute.mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return {
+          transactionHash: '0xconfirmed',
+          status: 'CONFIRMED',
+          confirmationStatus: 'confirmed',
+          disputeId: 'dispute_123',
+          bondLocked: true,
+        };
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onSuccess={onSuccess} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        // onSuccess should be called with real dispute ID after receipt
+        expect(onSuccess).toHaveBeenCalledWith('dispute_123');
+      });
+    });
+
+    it('does not call onSuccess if transaction is still pending', async () => {
+      const onSuccess = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      mockSubmitDispute.mockResolvedValue({
+        transactionHash: '0xpending',
+        status: 'PENDING',
+        confirmationStatus: 'pending',
+        bondLocked: false,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onSuccess={onSuccess} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        // onSuccess should NOT be called for pending tx
+        expect(onSuccess).not.toHaveBeenCalled();
+        expect(screen.getByText(/not yet confirmed/i)).toBeInTheDocument();
+      });
+    });
+
+    it('handles transaction revert gracefully', async () => {
+      const onError = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      mockSubmitDispute.mockRejectedValue(
+        new Error('Transaction failed: Transaction reverted on-chain')
+      );
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onError={onError} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(screen.getByText(/reverted/i)).toBeInTheDocument();
+        expect(onError).toHaveBeenCalledWith(expect.stringContaining('reverted'));
+      });
+    });
+
+    it('handles transaction replacement', async () => {
+      const onError = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      mockSubmitDispute.mockRejectedValue(
+        new Error('Transaction was replaced by a higher gas price transaction')
+      );
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onError={onError} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(screen.getByText(/replaced/i)).toBeInTheDocument();
+      });
+    });
+
+    it('extracts dispute ID from receipt and passes to onSuccess', async () => {
+      const onSuccess = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      mockSubmitDispute.mockResolvedValue({
+        transactionHash: '0x123',
+        status: 'CONFIRMED',
+        confirmationStatus: 'confirmed',
+        disputeId: 'dispute_from_logs_456',
+        bondLocked: true,
+        blockConfirmed: 1000,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onSuccess={onSuccess} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(onSuccess).toHaveBeenCalledWith('dispute_from_logs_456');
+      });
+    });
+
+    it('falls back to txHash if dispute ID not in logs', async () => {
+      const onSuccess = jest.fn();
+      mockBondApprovalStatus = 'approved';
+      mockBondAllowance = BigInt('1000000000000000000');
+
+      mockSubmitDispute.mockResolvedValue({
+        transactionHash: '0xfallback',
+        status: 'CONFIRMED',
+        confirmationStatus: 'confirmed',
+        disputeId: undefined, // No ID in logs yet
+        bondLocked: true,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} onSuccess={onSuccess} />
+      );
+
+      fillReason();
+      const form = screen.getByRole('dialog').querySelector('form')!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        // Fall back to txHash if ID not available
+        expect(onSuccess).toHaveBeenCalledWith('0xfallback');
+      });
+    });
+  });
+
+  describe('Defensive bond data validation', () => {
+    it('shows error and disables form when bond amount is invalid', () => {
+      const invalidContext = {
+        ...mockContext,
+        bond: {
+          ...mockContext.bond,
+          bondAmount: 'not-a-number', // Invalid
+        },
+      };
+
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: invalidContext,
+        isLoading: false,
+        error: null,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.getByText(/bond data error/i)).toBeInTheDocument();
+      expect(screen.getByText(/invalid.*bond amount/i)).toBeInTheDocument();
+      
+      const confirmBtn = screen.getByRole('button', { name: /confirm dispute/i });
+      expect(confirmBtn).toBeDisabled();
+    });
+
+    it('shows error when bond amount is negative', () => {
+      const invalidContext = {
+        ...mockContext,
+        bond: {
+          ...mockContext.bond,
+          bondAmount: '-1000000000000000000', // Negative
+        },
+      };
+
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: invalidContext,
+        isLoading: false,
+        error: null,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.getByText(/cannot be negative/i)).toBeInTheDocument();
+    });
+
+    it('shows error when bond amount contains decimals', () => {
+      const invalidContext = {
+        ...mockContext,
+        bond: {
+          ...mockContext.bond,
+          bondAmount: '1.5', // Decimals not allowed
+        },
+      };
+
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: invalidContext,
+        isLoading: false,
+        error: null,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.getByText(/non-negative integer/i)).toBeInTheDocument();
+    });
+
+    it('shows accessible error message for recovery', () => {
+      const invalidContext = {
+        ...mockContext,
+        bond: {
+          ...mockContext.bond,
+          bondAmount: 'invalid',
+        },
+      };
+
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: invalidContext,
+        isLoading: false,
+        error: null,
+      });
+
+      render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.getByText(/close this modal and try again/i)).toBeInTheDocument();
+      expect(screen.getByText(/contact support/i)).toBeInTheDocument();
+    });
+
+    it('recovers when context is fixed', () => {
+      const invalidContext = {
+        ...mockContext,
+        bond: {
+          ...mockContext.bond,
+          bondAmount: 'invalid',
+        },
+      };
+
+      const { rerender } = render(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.getByText(/bond data error/i)).toBeInTheDocument();
+
+      // Re-render with valid data
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: mockContext, // Valid context
+        isLoading: false,
+        error: null,
+      });
+
+      rerender(
+        <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+      );
+
+      expect(screen.queryByText(/bond data error/i)).not.toBeInTheDocument();
+    });
+
+    it('prevents render crash on untrusted data', () => {
+      // Test that we can render safely even with malformed context
+      const malformedContext = {
+        ...mockContext,
+        bond: null, // Missing bond entirely
+      };
+
+      jest.spyOn(require('@/hooks/useDisputeContext'), 'useDisputeContext').mockReturnValue({
+        context: malformedContext,
+        isLoading: false,
+        error: null,
+      });
+
+      // Should not throw
+      expect(() => {
+        render(
+          <OpenDispute claimId="claim_1" isOpen={true} onClose={jest.fn()} />
+        );
+      }).not.toThrow();
+
+      // Should show error
+      expect(screen.getByText(/bond data error/i)).toBeInTheDocument();
+    });
+  });

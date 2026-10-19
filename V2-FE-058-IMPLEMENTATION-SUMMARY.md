@@ -1,7 +1,12 @@
-# V2-FE-049: Dispute Opening and Challenge Bond Flow - Implementation Summary
+# V2-FE-058: Dispute Opening and Challenge Bond Flow - Implementation Summary
 
 ## Objective
 Built a focused, independently reviewable dispute opening flow with bond approval integration, fail-closed validation, and accessible user feedback for the V2 frontend.
+
+## GitHub Issue
+**Issue**: [#321 - Build Dispute Opening and Challenge Bond Flow](https://github.com/DigiNodes/truthbounty-frontend/issues/321)
+
+**Task**: V2-FE-058
 
 ## Implementation Overview
 
